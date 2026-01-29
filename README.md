@@ -1,6 +1,6 @@
 # PDF to Excel using Python
 
-Este projeto converte tabelas presentes em arquivos **PDF** para um arquivo **Excel (.xlsx)** estruturado e tratado, aplicando regras de negócio automaticamente (modalidade, bandeira e número de parcelas).
+Este projeto converte tabelas presentes em arquivos **PDF** para um arquivo **Excel (.xlsx)** estruturado e tratado.
 
 O processamento foi desenvolvido para lidar com PDFs reais, incluindo:
 - múltiplas páginas,
