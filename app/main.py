@@ -1,81 +1,87 @@
+import sys
 import pdfplumber
 import camelot
 import pandas as pd
-import re
-import sys
 
 
-def processar_pdf_para_excel(pdf_path, output_excel="tabela_tratada.xlsx"):
-    paginas = []
+def processar_pdf_para_excel(
+    pdf_path,
+    output_excel="tabelas_extraidas.xlsx",
+    coluna_quebra=1,
+    row_tol=15
+):
+    """
+    Extrai tabelas de qualquer PDF e consolida em um Excel.
+    
+    Parâmetros:
+    - pdf_path: caminho do PDF
+    - output_excel: nome do arquivo Excel de saída
+    - coluna_quebra: índice da coluna usada para detectar quebra de linha
+    - row_tol: tolerância de linha do Camelot (stream)
+    """
 
+    paginas_validas = []
+
+    # 1. Identificar páginas com conteúdo
     with pdfplumber.open(pdf_path) as pdf:
         for i, page in enumerate(pdf.pages, start=1):
             texto = page.extract_text()
             if texto and texto.strip():
-                paginas.append(i)
+                paginas_validas.append(i)
 
-    if not paginas:
-        raise ValueError("Nenhuma página com conteúdo encontrado no PDF.")
+    if not paginas_validas:
+        raise ValueError("Nenhuma página com conteúdo textual encontrada no PDF.")
 
+    # 2. Extrair tabelas
     tables = camelot.read_pdf(
         pdf_path,
-        pages=",".join(map(str, paginas)),
+        pages=",".join(map(str, paginas_validas)),
         flavor="stream",
         split_text=False,
-        row_tol=15
+        row_tol=row_tol
     )
+
+    if tables.n == 0:
+        raise ValueError("Nenhuma tabela detectada no PDF.")
 
     dataframes = []
 
+    # 3. Tratamento genérico das tabelas
     for table in tables:
         df = table.df.copy()
-        coluna_quebra = 1
+
         linhas_para_remover = []
 
-        for j in range(1, len(df)):
-            if df.iloc[j, coluna_quebra] and not df.iloc[j - 1, coluna_quebra]:
-                df.iloc[j - 1, coluna_quebra] += " " + df.iloc[j, coluna_quebra]
-                linhas_para_remover.append(j)
+        # Tratamento de células quebradas entre linhas
+        for i in range(1, len(df)):
+            atual = df.iloc[i, coluna_quebra]
+            anterior = df.iloc[i - 1, coluna_quebra]
+
+            if atual and not anterior:
+                df.iloc[i - 1, coluna_quebra] = f"{anterior} {atual}".strip()
+                linhas_para_remover.append(i)
 
         df.drop(index=linhas_para_remover, inplace=True)
         df.reset_index(drop=True, inplace=True)
+
+        # Limpeza básica
         df = df.replace("\n", " ", regex=True)
+        df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
 
         dataframes.append(df)
 
-    df = pd.concat(dataframes, ignore_index=True)
-    df.columns = df.iloc[0]
-    df = df[1:].reset_index(drop=True)
-    df.columns = df.columns.str.strip()
+    # 4. Consolidação final
+    df_final = pd.concat(dataframes, ignore_index=True)
 
-    df['Modalidade'] = None
-    df['Bandeira'] = None
-    df['Parcelas'] = None
+    # Se a primeira linha parecer cabeçalho, usa como coluna
+    if df_final.iloc[0].duplicated().sum() == 0:
+        df_final.columns = df_final.iloc[0]
+        df_final = df_final[1:].reset_index(drop=True)
 
-    df.loc[df['Forma'].str.contains('CRÉDITO', case=False, na=False), 'Modalidade'] = 'Crédito'
-    df.loc[df['Forma'].str.contains('DÉBITO', case=False, na=False), 'Modalidade'] = 'Débito'
+    df_final.columns = df_final.columns.astype(str).str.strip()
 
-    df['Bandeira'] = df['Forma'].str.extract(
-        r'(Mastercard|Visa|Elo|Amex)', flags=re.IGNORECASE
-    )
-
-    df['Parcelas'] = (
-        df['Forma']
-        .str.extract(r'(\d+)\s*[xX]', expand=False)
-        .fillna(1)
-        .astype(int)
-    )
-
-    colunas = list(df.columns)
-    i = colunas.index('Forma') + 1
-
-    for col in ['Modalidade', 'Bandeira', 'Parcelas']:
-        colunas.remove(col)
-        colunas.insert(i, col)
-        i += 1
-
-    df = df[colunas]
-    df.to_excel(output_excel, index=False)
+    # 5. Exportação
+    df_final.to_excel(output_excel, index=False)
 
     return output_excel
 
